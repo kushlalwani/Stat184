@@ -1,0 +1,247 @@
+---
+title: "Preliminary EDA"
+author: "Kush Lalwani"
+date: "2024-04-15"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, warning=FALSE}
+library(tidyverse)
+library(rvest)
+library(chromote)
+library(ggpubr)
+```
+# Research Question
+I will be analyzing the relationship between a player's wages and their in game performance. The question is: Does a player's wages affect their performance in game? 
+
+# Primary Data Source
+ - I found my data sources from FBref.com, also known as Football Reference. 
+ - This data is put into table form by Football Reference, but the original data is from Capology. Which is a website that tracks and stores all financial information about players and clubs. 
+ - The data was originally collected by Capology. "Capology is used by professional football clubs, agencies, as well as technology platforms, to analyze trends, improve scouting and contract negotiations, and build complex software solutions" which is quoted directly from their website. 
+ - Here each case in the table represents a player in the Premier League. It contains their name, nationality, team, position, age, and weekly/annual wage in pounds, euros, and dollars. It contains the data of 592 players
+ - I plan to use the name and team variables to join this table to a secondary data source. I will also use the annual player salary to make my observations. Finally, I will use the position variable to determine which secondary table I join with. For example, I cannot judge a goalkeepers performance based on goals and assists, so I will use the position to determine how statistics are evaluated. 
+
+```{r}
+wage_link<-"https://fbref.com/en/comps/9/wages/Premier-League-Wages"
+wage_stats <- wage_link %>%
+  read_html() %>%
+  html_elements(css ="table")%>%
+  html_table()
+
+wage_stats <- wage_stats[[2]]
+head(wage_stats)
+```
+Here we have the raw data directly from the webpage. We see that is not in tidy data form. The rank variable is not needed and neither is nation or notes, so they can be selected out. Also the wages are a character string in three different currencies, we want it in only dollars.  
+```{r}
+extract_dollar <- function(value) {
+  dollar_amount <- gsub(".*\\$([0-9,]+).*", "\\1", value)
+  dollar_amount <- as.numeric(gsub(",", "", dollar_amount))
+  return(dollar_amount)
+}
+```
+This function is used to convert any of the wage amounts into a numeric dollar amount
+```{r}
+player_wages <- 
+  wage_stats %>% 
+  select(!c(Rk,Notes,Nation,Age,`Weekly Wages`)) %>%
+  rename(name = Player, position = Pos, team = Squad, pay_year = `Annual Wages`) %>%
+  mutate(pay_year = extract_dollar(pay_year))
+head(player_wages)
+```
+Now the data is in tidy data form, and has been converted to US dollars
+# Seconday Data Sources
+- For my secondary data sources I will use different tables from the same website. I will use four different sets based on the four different positions a player could be. I will use Player Goalkeeping for the goalkeepers. Defenders will be judged based on Player Defensive Action. Midfielders will be judged based on Player Passing. Finally Attackers will be judged based on Player Shooting. 
+- This data is collected by Opta, which is an organization in the UK that collects all kinds of stats related to the Premier League. 
+- These stats were collected to analyze a players performance during a game. 
+- I only want to analyze players that have played at least 5 games
+```{r}
+get_table <- function(link){
+  page <- link %>%
+    read_html_live() %>%
+    html_elements(css = "table") %>%
+    html_table()
+  out <- page[[3]]
+  return(out)
+}
+```
+Making function to read the live html.
+I had trouble reading the table I needed from the website. I found out that the table was loaded using javascript and not directly in the HTML. So to solve this issue, I used a new function in rvest called read_html_live(). This function uses the chromote package, which uses google chrome to load the entire website and read it directly. Unfortunately, this function doesn't work when trying to knit into a pdf. So I will use csv files that were copy and pasted instead. Now the data needs to be put into tidy data form and I will only select the stats that I am interested in. 
+
+### Goalkeepers
+For goalkeepers, performance will be rated on their save percentage, goals allowed, and penalty saves
+```{r}
+gk_link<-"https://fbref.com/en/comps/9/keepers/Premier-League-Stats"
+#gk_stats <- get_table(gk_link)
+
+gk_stats <- read.csv("goalkeeper stats.csv")
+
+#colnames(gk_stats) <- as.character(gk_stats[1,])
+colnames(gk_stats)[26] <- "PKSave%"
+head(gk_stats)
+```
+```{r}
+goalkeeper_stat <- 
+  gk_stats %>%
+  select(c(Player,Pos,Squad,`X90s`,GA90,`Save.`,`PKSave%`)) %>%
+  rename(name = Player, position = Pos, team = Squad, games = `X90s`, goal_against_per90 = GA90, save_percentage = `Save.`, penalty_save_percentage = `PKSave%`) %>%
+  filter(team != "Squad") %>%
+  mutate(games = as.numeric(games),goal_against_per90 = as.numeric(goal_against_per90),save_percentage = as.numeric(save_percentage), penalty_save_percentage = as.numeric(penalty_save_percentage)) %>%
+  filter(games >= 5)
+
+head(goalkeeper_stat)
+```
+```{r}
+#Now we need to join this plot with the wage plot
+goalkeeper_stat <-
+  goalkeeper_stat %>%
+  left_join(player_wages, by = c("name","position","team"))
+
+head(goalkeeper_stat)
+```
+
+### Defenders
+For defenders, performance will be rated on their tackle success percentage, blocks, interceptions, and errors leading to goals. 
+```{r}
+df_link<-"https://fbref.com/en/comps/9/defense/Premier-League-Stats"
+#df_stats <- get_table(df_link)
+
+df_stats <- read.csv("defender stats.csv")
+
+colnames(df_stats) <- as.character(df_stats[1,])
+head(df_stats)
+```
+```{r}
+defender_stats <- 
+  df_stats %>%
+  select(c(Player,Pos,Squad,`90s`,`Tkl%`,Blocks,Int,Err)) %>%
+  rename(name=Player,position=Pos,team=Squad,games = `90s`,
+         tackle_percent=`Tkl%`,block=Blocks,interceptions=Int,errors=Err) %>%
+  filter(team != "Squad") %>%
+  filter(grepl("DF",position)) %>%
+  mutate(tackle_percent=as.numeric(tackle_percent),block=as.numeric(block), games = as.numeric(games),
+         interceptions=as.numeric(interceptions),errors=as.numeric(errors)) %>%
+  filter(games >= 5)
+  
+head(defender_stats)
+```
+```{r}
+defender_stats <-
+  defender_stats %>%
+  left_join(player_wages, by = c("name","position","team"))
+
+head(defender_stats)
+```
+### Midfielders
+For midfielders, performance will be based on their pass completion percentage, assists (actual and expected), and progressive passes. 
+```{r}
+md_link<-"https://fbref.com/en/comps/9/passing/Premier-League-Stats"
+#md_stats <- get_table(md_link)
+
+md_stats <- read.csv("midfield stats.csv")
+
+colnames(md_stats) <- as.character(md_stats[1,])
+colnames(md_stats)[16] <- "short_cmp%"
+colnames(md_stats)[19] <- "med_cmp%"
+colnames(md_stats)[22] <- "long_cmp%"
+head(md_stats)
+```
+```{r}
+midfield_stats <- md_stats %>%
+  select(c(Player, Pos, Squad, `90s`, `Cmp%`, Ast, xA, PrgP)) %>%
+  rename(name = Player, position = Pos, team = Squad, games = `90s`, cmp_perc = `Cmp%`, assists = Ast, 
+         xAssists = xA, prog_pass = PrgP) %>%
+  filter(name != "Player") %>%
+  filter(grepl("MF", position)) %>%
+  mutate(games = as.numeric(games), cmp_perc = as.numeric(cmp_perc), assists = as.numeric(assists), 
+         xAssists = as.numeric(xAssists), prog_pass = as.numeric(prog_pass)) %>%
+  filter(games >= 5)
+
+head(midfield_stats)
+```
+```{r}
+midfield_stats <-
+  midfield_stats %>%
+  left_join(player_wages, by = c("name","position","team"))
+
+head(midfield_stats)
+```
+### Forwards
+For forwards, performance will be based on their goals (actual and expected) and shot on target percentage.
+```{r}
+fw_link<-"https://fbref.com/en/comps/9/shooting/Premier-League-Stats"
+#fw_stats <- get_table(fw_link)
+
+fw_stats <- read.csv("attacker stats.csv")
+
+colnames(fw_stats) <- as.character(fw_stats[1,])
+
+head(fw_stats)
+```
+```{r}
+attack_stats <- fw_stats %>%
+  select(c(Player, Pos, Squad, `90s`,Gls,`SoT%`,xG)) %>%
+  rename(name = Player, position = Pos, team = Squad, games = `90s`,goals = Gls,
+         shot_target_perc = `SoT%`,xGoal = xG) %>%
+  filter(name != "Player") %>%
+  filter(grepl("FW", position)) %>%
+  mutate(games = as.numeric(games),goals = as.numeric(goals),
+         shot_target_perc=as.numeric(shot_target_perc),xGoal = as.numeric(xGoal)) %>%
+  filter(games >= 5)
+
+head(attack_stats)
+```
+```{r}
+attack_stats <-
+  attack_stats %>%
+  left_join(player_wages, by = c("name","position","team"))
+
+head(attack_stats)
+```
+
+# Plots
+these plots are not final, they are just to get a good idea of how the data looks, I will add more layers to them and revise them when it is time to submit the final report.
+
+### GK plot
+```{r}
+ggplot(goalkeeper_stat) +
+  aes(x = save_percentage,y = penalty_save_percentage,colour = pay_year) +
+  geom_point(shape = "circle", size = 1.5) +
+  scale_color_gradient() +
+  theme_minimal()
+```
+This plot shows save percentage vs penalty save percentage, with yearly pay being the color. as we can see there is not really a relation between both the save percentages, but there is a slight relation between pay and save percentage, with the higher paid goalies having a higher save percentage.
+
+### DF Plot
+```{r}
+ggplot(defender_stats) +
+  aes(x = tackle_percent, y = pay_year, size = errors) +
+  geom_point(shape = "circle", colour = "#112446") +
+  theme_minimal()
+```
+This plots tackle percentage vs the yearly pay, with the errors leading to goal being the size. We can see there is a relation between errors leading to goal and the yearly pay, with most of the players with many errors having a relatively low pay.There is also a slight positive correlation between tackle success percentage and pay.
+
+### MF Plot
+```{r}
+ggplot(midfield_stats) +
+  aes(x = assists,y = xAssists,colour = cmp_perc) +
+  geom_point(shape = "circle",aes(size = pay_year)) +
+  scale_color_gradient()
+```
+Here we have expected assists vs actual assists. As expected, we can see that there is a relation between expected assists and actual assists. We also have the pass completion percentage a the size and we have the annual pay as the color. As we can see the players that outperform and underperform their expected assists, are from the lower half of the pay spectrum. On the other hand, a lot of the players that are highly paid have expected assists similar to actual assists; so with these players teams are getting more consistent players
+
+### FW Plot
+```{r}
+ggplot(attack_stats) +
+  aes( x = goals,y = xGoal,colour = shot_target_perc) +
+  geom_point(shape = "circle", aes(size = pay_year)) +
+  scale_color_gradient() +
+  stat_smooth(method = "lm", formula = y ~ x, geom = "smooth",color="red") + 
+  stat_cor(method = "spearman")
+```
+This plot is similar to the midfielders plot, but instead of assists, it plots goals vs expected goals. It also has pay as the size and shot on target percentage as the color. As we see, the darker colors are more concentrated to the bottom left of the graph. This shows the relationship between goals/expected goals and shooting percentage. We can come to the conclusion that: the less accurate a player shoots, the less goals they are expected to score.

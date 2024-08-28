@@ -1,0 +1,76 @@
+---
+title: "Project Presentation"
+author: "Kush Lalwani"
+date: "2024-04-23"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r,warning=FALSE}
+library(tidyverse)
+library(rvest)
+```
+# Research Question
+I will be analyzing the relationship between a player's wages and their in game performance. The question is: Does a player's wages affect their performance in game? 
+This question is important because it is important to understand if players are playing better or worse depending on their salary. This could help the teams determine if they should give their best players more money to keep their performances at a high level. Or it could also be used to decide the future of struggling players; whether they should get new contracts or sold. 
+```{r}
+wage_link<-"https://fbref.com/en/comps/9/wages/Premier-League-Wages"
+wage_stats <- wage_link %>%
+  read_html() %>%
+  html_elements(css ="table")%>%
+  html_table()
+
+wage_stats <- wage_stats[[2]]
+
+extract_dollar <- function(value) {
+  dollar_amount <- gsub(".*\\$([0-9,]+).*", "\\1", value)
+  dollar_amount <- as.numeric(gsub(",", "", dollar_amount))
+  return(dollar_amount)
+}
+
+player_wages <- 
+  wage_stats %>% 
+  select(!c(Rk,Notes,Age,`Weekly Wages`,Nation)) %>%
+  rename(name = Player, position = Pos, team = Squad, pay_year = `Annual Wages`) %>%
+  mutate(pay_year = extract_dollar(pay_year))
+
+gk_stats <- read.csv("goalkeeper stats.csv")
+colnames(gk_stats)[26] <- "PKSave%"
+
+goalkeeper_stat <- 
+  gk_stats %>%
+  select(c(Player,Pos,Squad,`X90s`,GA90,`Save.`,`PKSave%`)) %>%
+  rename(name = Player, position = Pos, team = Squad, games = `X90s`, goal_against_per90 = GA90, save_percentage = `Save.`, penalty_save_percentage = `PKSave%`) %>%
+  filter(team != "Squad") %>%
+  mutate(games = as.numeric(games),goal_against_per90 = as.numeric(goal_against_per90),save_percentage = as.numeric(save_percentage), penalty_save_percentage = as.numeric(penalty_save_percentage)) %>%
+  filter(games >= 5)
+
+goalkeeper_stat <-
+  goalkeeper_stat %>%
+  left_join(player_wages, by = c("name","position","team"))
+```
+# Plot
+```{r,fig.align='center',out.width="100%"}
+
+ggplot(goalkeeper_stat) +
+  aes(x = save_percentage,y = pay_year/1000000,colour = goal_against_per90,label = name) +
+  geom_point(shape = "circle", size = 2.5) +
+  scale_color_gradient(limits= c(0.5,3),low = "black",high = "magenta",name = "Goals Conceded \nPer 90 Minutes") +
+  scale_y_continuous(breaks = seq(0, 10, 1)) +
+  scale_x_continuous(breaks = seq(50,85,5)) + 
+  geom_text(position = position_jitter(width = 0.15, height = 0.15), size = 1.5, vjust = -1.5) +
+  ylab("Annual Pay ($ Million)") +
+  xlab("Save Percentage (%)") +
+  theme_light()
+```
+Through this plot we can see the relationship between a goalkeepers save percentage and their annual pay in millions of dollars. We also have the dots colored by the amount of goals each goalkeeper concedes per 90 minutes. We can see a slight positive linear trend in this data meaning that typically the higher paid players will have a higher save percentage. We also see that there are more pink colored points in the bottom left quarter of the graph. This means that players that are paid less and have a lower save percentage might concede more goals. This means shows that there is a relationship between the goalkeepers performance(save percentage/goals conceded) and their pay. 
+
+# Challenge
+One challenge that I faced was that the table of the goalkeeper's statistics would not read using the normal read_html() function. This was because the website used javascript to generate the table, meaning the function couldn't read it directly from the HTML code. To solve this issue, I used the read_html_live() function to read my table. This function uses google chrome in the background to open the website and read it directly from the chrome tab. This partially solved my problem, the one issue I still have is that sometimes the chrome tab cannot read the table within the 10 seconds the function allows.
+
+
